@@ -1,0 +1,97 @@
+sequenceDiagram
+    autonumber
+    actor DevOps as Developer/DevOps
+    participant K8s as Kubernetes
+    participant Pod as Pod: Spring Boot App
+    participant RT as RestTemplate
+    participant HC as Apache HttpClient 5
+    participant JSSE as JSSE / SSLContext
+    participant GW as Partner Gateway (mTLS)
+    participant API as Partner API (upstream)
+    participant CA as Partner CA / Trust Anchor
+    participant Logs as Observability/Logs
+
+    rect rgb(235, 245, 255)
+    note over DevOps,K8s: Fase A — Provisionamento/Configuração
+    DevOps->>DevOps: Preparar client.p12 (cert + private key)
+    DevOps->>DevOps: Receber material do parceiro
+    note right of DevOps: CA/cadeia OU leaf cert
+    note right of DevOps: OU fingerprint SHA-256
+    note right of DevOps: OU SPKI pin (SHA-256)
+    alt Truststore criado fora do cluster (recomendado)
+        DevOps->>DevOps: Criar truststore.p12 com CA/cadeia (ou leaf)
+        DevOps->>K8s: Criar Secret com client.p12 + truststore.p12
+    else Pinning (sem truststore de CA)
+        DevOps->>K8s: Criar Secret com client.p12
+        DevOps->>K8s: Configurar pin (fingerprint ou SPKI)
+    end
+    opt Truststore criado dentro do cluster
+        DevOps->>K8s: Criar ConfigMap com CA/certificado
+        K8s->>K8s: Job/initContainer gera truststore.p12
+        K8s->>K8s: Monta truststore.p12 no pod
+    end
+    DevOps->>K8s: Criar Secret de senhas (env vars)
+    DevOps->>K8s: Deploy (Deployment + volume /etc/mtls)
+    K8s->>Pod: Monta Secrets como volume (readOnly)
+    K8s->>Pod: Injeta env vars (senhas)
+    Pod->>Pod: Lê application.yml (modo TRUSTSTORE ou PINNING)
+    Pod->>JSSE: Monta SSLContext (KeyManager + TrustManager)
+    note right of Pod: Private key não sai do pod
+    note right of Pod: mTLS ocorre no handshake TLS (antes do HTTP)
+    Pod->>RT: Configura RestTemplate com HttpClient 5
+    end
+
+    rect rgb(240, 255, 240)
+    note over Pod,GW: Fase B — Execução do Request (outbound)
+    Pod->>RT: Chamar API do parceiro
+    RT->>HC: Executar request
+    HC->>JSSE: Iniciar handshake TLS
+    GW->>JSSE: Enviar certificado do servidor
+    alt Modo TRUSTSTORE
+        JSSE->>CA: Validar cadeia via truststore
+    else Modo PIN_FINGERPRINT
+        JSSE->>CA: Validar cadeia (trust manager base)
+        JSSE->>JSSE: Calcular SHA-256 do leaf
+        JSSE->>JSSE: Comparar com fingerprint pin
+    else Modo PIN_SPKI
+        JSSE->>CA: Validar cadeia (trust manager base)
+        JSSE->>JSSE: Calcular SHA-256 do SPKI
+        JSSE->>JSSE: Comparar com SPKI pin
+    end
+    GW->>JSSE: Solicitar certificado do cliente (mTLS)
+    JSSE->>GW: Enviar certificado do cliente
+    JSSE->>GW: Provar posse da private key (handshake)
+    GW->>GW: Validar certificado do cliente
+    GW-->>JSSE: Handshake OK (TLS estabelecido)
+    note over RT,JSSE: HTTP só acontece após TLS
+    RT->>GW: Enviar HTTP request
+    GW->>API: Proxy para Partner API
+    API-->>GW: Response
+    GW-->>RT: Response
+    RT-->>Pod: Response
+    end
+
+    rect rgb(255, 245, 235)
+    note over Pod,Logs: Fase C — Falhas comuns e observabilidade
+    alt PKIX path building failed
+        JSSE-->>Pod: SSLHandshakeException
+        Pod->>Logs: Log seguro: "PKIX path building failed"
+        note right of Pod: Falha antes do HTTP
+    else bad_certificate (cliente rejeitado)
+        JSSE-->>Pod: SSLHandshakeException
+        Pod->>Logs: Log seguro: "bad_certificate"
+        note right of Pod: Falha antes do HTTP
+    else handshake_failure
+        JSSE-->>Pod: SSLHandshakeException
+        Pod->>Logs: Log seguro: "handshake_failure"
+        note right of Pod: Falha antes do HTTP
+    else hostname mismatch
+        JSSE-->>Pod: SSLHandshakeException
+        Pod->>Logs: Log seguro: "hostname mismatch"
+        note right of Pod: Falha antes do HTTP
+    else Pin mismatch
+        JSSE-->>Pod: SSLHandshakeException
+        Pod->>Logs: Log seguro: "pin mismatch" (tipo do pin)
+        note right of Pod: Falha antes do HTTP
+    end
+    end
