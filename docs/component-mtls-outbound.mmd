@@ -1,0 +1,40 @@
+flowchart LR
+    subgraph K8s[Kubernetes Cluster]
+        subgraph Pod[Pod: Spring Boot App]
+            subgraph AppLayer[Application Layer]
+                Svc[Service / Client Adapter]
+            end
+            RT[RestTemplate]
+            HC[Apache HttpClient 5]
+            TLS[JSSE / SSLContext\n(TLS handshake)]
+        end
+        subgraph FS[File System do Pod]
+            KS[client.p12\nKeystore = quem eu sou]
+            TS[truststore.p12\nTruststore = no que eu confio]
+        end
+    end
+
+    GW[Partner Gateway (mTLS)]
+    API[Partner API]
+    Trust[Partner Trust Anchor\n(CA / Pin)]
+
+    Svc --> RT
+    RT --> HC
+    HC --> TLS
+    TLS -->|Handshake TLS (antes do HTTP)| GW
+    GW --> API
+
+    KS -.volume mount.-> TLS
+    TS -.volume mount.-> TLS
+    Trust -.valida.-> TLS
+
+    note1["SSLContext pertence ao client HTTP,\nnão ao servidor Jetty"]
+    note2["Certificados entram via volume mount,\nnão via imagem Docker"]
+    note3["TLS/mTLS = autenticação\nHTTP = aplicação"]
+
+    note1 --- TLS
+    note2 --- FS
+    note3 --- Svc
+
+    classDef boundary fill:#eef,stroke:#447,stroke-width:1px;
+    class K8s,Pod,FS boundary;

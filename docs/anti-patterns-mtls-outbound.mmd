@@ -1,0 +1,26 @@
+flowchart TB
+    title["Anti-patterns e armadilhas comuns (mTLS outbound)"]
+
+    A1["Desabilitar validação SSL para 'funcionar rápido'"]
+    A2["Configurar truststore mas desabilitar hostname verification"]
+    A3["Usar pinning sem processo de rotação"]
+    A4["Colocar .p12 dentro da imagem Docker"]
+    A5["Confundir Jetty inbound com client-side TLS"]
+
+    C1["Risco: exposição a MITM"]
+    C2["Risco: conexão com host errado"]
+    C3["Risco: outage na rotação"]
+    C4["Risco: secrets vazam no build"]
+    C5["Risco: troubleshooting errado"]
+
+    A1 --> C1
+    A2 --> C2
+    A3 --> C3
+    A4 --> C4
+    A5 --> C5
+
+    note1["mTLS acontece no handshake TLS\n(antes do HTTP)"]
+    note2["Keystore = quem eu sou\nTruststore = no que eu confio"]
+
+    note1 --- A1
+    note2 --- A4

@@ -1,0 +1,130 @@
+@startuml
+title Outbound mTLS (client-side) — Spring Boot + RestTemplate + HttpClient 5
+
+actor DevOps as "Developer/DevOps"
+participant K8s as "Kubernetes"
+participant Pod as "Pod: Spring Boot App"
+participant App as "Application Layer"
+participant RT as "RestTemplate"
+participant HC as "Apache HttpClient 5"
+participant TLS as "TLS Handshake (JSSE / SSLContext)"
+participant GW as "Partner Gateway (mTLS)"
+participant API as "Partner API (upstream)"
+participant CA as "Partner Trust Anchor (CA / Pin)"
+participant Logs as "Observability/Logs"
+
+rect rgb(235,245,255)
+  note over DevOps,K8s
+    Fase A — Provisionamento/Configuração
+  end note
+  DevOps -> DevOps: Preparar client.p12 (client certificate + private key)
+  note right of DevOps: Keystore = quem eu sou
+  DevOps -> DevOps: Receber material do parceiro
+  note right of DevOps: CA/cadeia OU leaf cert
+  note right of DevOps: OU fingerprint SHA-256
+  note right of DevOps: OU SPKI pin (SHA-256 da public key)
+  alt Truststore criado fora do cluster (recomendado)
+    DevOps -> DevOps: Criar truststore.p12 com CA/cadeia (ou leaf)
+    note right of DevOps: Truststore = no que eu confio
+    DevOps -> K8s: Criar Secret com client.p12 + truststore.p12
+  else Pinning (sem truststore de CA)
+    DevOps -> K8s: Criar Secret com client.p12
+    DevOps -> K8s: Configurar pin (fingerprint ou SPKI)
+  end
+  opt Truststore criado dentro do cluster
+    DevOps -> K8s: Criar ConfigMap com CA/certificado
+    K8s -> K8s: Job/initContainer gera truststore.p12
+    K8s -> K8s: Monta truststore.p12 no pod
+  end
+  DevOps -> K8s: Criar Secret de senhas (env vars)
+  DevOps -> K8s: Deploy (Deployment + volume /etc/mtls)
+  K8s -> Pod: Monta Secrets como volume (readOnly)
+  note right of K8s: Secrets não ficam na imagem Docker
+  K8s -> Pod: Injeta env vars (senhas)
+  Pod -> App: Lê application.yml (modo TRUSTSTORE ou PINNING)
+  App -> TLS: Monta SSLContext (KeyManager + TrustManager)
+  note right of App: Private key não sai do pod
+  note right of App: mTLS ocorre no handshake TLS (antes do HTTP)
+  App -> RT: Configura RestTemplate com HttpClient 5
+end
+
+rect rgb(240,255,240)
+  note over App,GW
+    Fase B — Execução do Request (outbound)
+  end note
+  rect rgb(255,255,255)
+    note over App
+      Camada de Aplicação
+    end note
+    App -> RT: Chamar API do parceiro
+  end rect
+  rect rgb(255,255,255)
+    note over RT,HC
+      Camada de Cliente HTTP
+    end note
+    RT -> HC: Executar request
+  end rect
+  rect rgb(255,255,255)
+    note over HC,TLS
+      Camada de TLS/Handshake
+    end note
+    HC -> TLS: Iniciar handshake TLS
+    GW -> TLS: Enviar certificado do servidor
+    alt TRUSTSTORE (CA/cadeia)
+      note right of TLS: Mais estável para rotação
+      TLS -> CA: Validar cadeia via truststore
+    else PIN_FINGERPRINT (leaf cert)
+      note right of TLS: Precisa atualizar pin na rotação
+      TLS -> CA: Validar cadeia (trust manager base)
+      TLS -> TLS: Calcular SHA-256 do leaf
+      TLS -> TLS: Comparar com fingerprint pin
+    else PIN_SPKI (public key)
+      note right of TLS: Tolerante a reemissão do cert
+      TLS -> CA: Validar cadeia (trust manager base)
+      TLS -> TLS: Calcular SHA-256 da public key
+      TLS -> TLS: Comparar com SPKI pin
+    end
+    GW -> TLS: Solicitar certificado do cliente (mTLS)
+    TLS -> GW: Enviar certificado do cliente
+    TLS -> GW: Provar posse da private key (handshake)
+    GW -> GW: Validar certificado do cliente
+    note right of GW: Autenticação do cliente
+    note right of GW: Autorização é decisão do parceiro
+    GW --> TLS: Handshake OK (TLS estabelecido)
+    note over RT,TLS: HTTP só acontece após TLS
+  end rect
+  rect rgb(255,255,255)
+    note over GW,API
+      Infra do parceiro
+    end note
+    RT -> GW: Enviar HTTP request
+    GW -> API: Proxy para Partner API
+    API --> GW: Response
+    GW --> RT: Response
+    RT --> App: Response
+  end rect
+end
+
+rect rgb(255,245,235)
+  note over App,Logs
+    Fase C — Falhas comuns e observabilidade
+  end note
+  alt PKIX path building failed (TLS/Handshake)
+    TLS --> App: SSLHandshakeException
+    App -> Logs: Log seguro: "PKIX path building failed"
+    note right of App: Erro ANTES do HTTP
+  else bad_certificate (TLS/Handshake)
+    TLS --> App: SSLHandshakeException
+    App -> Logs: Log seguro: "bad_certificate"
+    note right of App: Erro ANTES do HTTP
+  else hostname mismatch (TLS/Handshake)
+    TLS --> App: SSLHandshakeException
+    App -> Logs: Log seguro: "hostname mismatch"
+    note right of App: Erro ANTES do HTTP
+  else handshake_failure (TLS/Handshake)
+    TLS --> App: SSLHandshakeException
+    App -> Logs: Log seguro: "handshake_failure"
+    note right of App: Erro ANTES do HTTP
+  end
+end
+@enduml

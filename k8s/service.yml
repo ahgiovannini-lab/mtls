@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: mtls-client
+  namespace: mtls-demo
+spec:
+  selector:
+    app: mtls-client
+  ports:
+    - port: 8080
+      targetPort: 8080
+      protocol: TCP
