@@ -1,0 +1,48 @@
+@startuml
+left to right direction
+skinparam componentStyle rectangle
+
+rectangle "Kubernetes Cluster" {
+  rectangle "Pod: Spring Boot App" {
+    rectangle "Application Layer" {
+      component "Service / Client Adapter" as Svc
+    }
+    component "RestTemplate" as RT
+    component "Apache HttpClient 5" as HC
+    component "JSSE / SSLContext\n(TLS handshake)" as TLS
+  }
+  rectangle "File System do Pod" {
+    artifact "client.p12\nKeystore = quem eu sou" as KS
+    artifact "truststore.p12\nTruststore = no que eu confio" as TS
+  }
+}
+
+component "Partner Gateway (mTLS)" as GW
+component "Partner API" as API
+component "Partner Trust Anchor\n(CA / Pin)" as Trust
+
+Svc --> RT
+RT --> HC
+HC --> TLS
+TLS --> GW : Handshake TLS (antes do HTTP)
+GW --> API
+
+KS ..> TLS : volume mount
+TS ..> TLS : volume mount
+Trust ..> TLS : valida
+
+note right of TLS
+  SSLContext pertence ao client HTTP,
+  não ao servidor Jetty
+end note
+
+note right of TS
+  Certificados entram via volume mount,
+  não via imagem Docker
+end note
+
+note right of Svc
+  TLS/mTLS = autenticação
+  HTTP = aplicação
+end note
+@enduml
