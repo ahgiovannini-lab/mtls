@@ -1,0 +1,21 @@
+spring:
+  application:
+    name: mtls-partner-client
+
+partner:
+  mtls:
+    enabled: true
+    client-keystore-path: /etc/mtls/client.p12
+    client-keystore-password: ${CLIENT_KEYSTORE_PASSWORD}
+    client-keystore-type: PKCS12
+    server-validation:
+      mode: TRUSTSTORE
+      truststore-path: /etc/mtls/truststore.p12
+      truststore-password: ${TRUSTSTORE_PASSWORD}
+      truststore-type: PKCS12
+      pinned-cert-sha256-hex: ${PARTNER_PIN_FINGERPRINT:}
+      pinned-spki-sha256-base64: ${PARTNER_PIN_SPKI:}
+
+logging:
+  level:
+    com.example.mtls: INFO

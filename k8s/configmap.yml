@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mtls-app-config
+  namespace: mtls-demo
+data:
+  application.yml: |
+    partner:
+      mtls:
+        enabled: true
+        server-validation:
+          mode: TRUSTSTORE
+    logging:
+      level:
+        com.example.mtls: INFO

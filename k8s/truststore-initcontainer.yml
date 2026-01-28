@@ -1,0 +1,61 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: mtls-client-with-init
+  namespace: mtls-demo
+spec:
+  containers:
+    - name: mtls-client
+      image: your-registry/mtls-client:latest
+      env:
+        - name: CLIENT_KEYSTORE_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: partner-mtls-passwords
+              key: CLIENT_KEYSTORE_PASSWORD
+        - name: TRUSTSTORE_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: partner-mtls-passwords
+              key: TRUSTSTORE_PASSWORD
+      volumeMounts:
+        - name: mtls-files
+          mountPath: /etc/mtls
+          readOnly: true
+        - name: truststore-output
+          mountPath: /etc/mtls-generated
+          readOnly: true
+  initContainers:
+    - name: build-truststore
+      image: eclipse-temurin:21-jre-jammy
+      env:
+        - name: TRUSTSTORE_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: partner-mtls-passwords
+              key: TRUSTSTORE_PASSWORD
+      command:
+        - /bin/sh
+        - -c
+        - |
+          keytool -importcert -noprompt \
+            -alias partner-ca \
+            -file /input/partner-ca.pem \
+            -keystore /output/truststore.p12 \
+            -storetype PKCS12 \
+            -storepass "$TRUSTSTORE_PASSWORD"
+      volumeMounts:
+        - name: partner-ca
+          mountPath: /input
+          readOnly: true
+        - name: truststore-output
+          mountPath: /output
+  volumes:
+    - name: mtls-files
+      secret:
+        secretName: partner-mtls-files
+    - name: partner-ca
+      configMap:
+        name: partner-ca-cert
+    - name: truststore-output
+      emptyDir: {}

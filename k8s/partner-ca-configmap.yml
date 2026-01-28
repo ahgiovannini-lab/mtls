@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: partner-ca-cert
+  namespace: mtls-demo
+data:
+  partner-ca.pem: |
+    -----BEGIN CERTIFICATE-----
+    PLACEHOLDER_CA_CERTIFICATE
+    -----END CERTIFICATE-----
