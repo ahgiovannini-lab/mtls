@@ -190,6 +190,126 @@ Log esperado:
 - A porta **9443** evita conflito com processos que ja usam **8443**.
 - Este setup e **apenas para validacao local**. Para producao use certificados reais do parceiro.
 
+## Setup fake com CA do partner (local)
+
+Este fluxo simula um parceiro que possui **CA propria**. O servidor (partner) usa um certificado
+assinado por essa CA, e o cliente confia na CA via truststore.
+
+### 1) Criar CA fake do partner
+
+```bash
+mkdir -p .mtls
+
+openssl req -x509 -newkey rsa:2048 \
+  -keyout .mtls/partner-ca.key -out .mtls/partner-ca.crt \
+  -days 3650 -nodes -subj "/CN=partner-ca"
+```
+
+### 2) Criar CSR e assinar certificado do servidor (partner)
+
+```bash
+openssl req -newkey rsa:2048 -nodes \
+  -keyout .mtls/partner.key -out .mtls/partner.csr \
+  -subj "/CN=localhost" \
+  -addext "subjectAltName=DNS:localhost"
+
+openssl x509 -req \
+  -in .mtls/partner.csr \
+  -CA .mtls/partner-ca.crt -CAkey .mtls/partner-ca.key -CAcreateserial \
+  -out .mtls/partner.crt -days 3650 -sha256 \
+  -extfile <(printf "subjectAltName=DNS:localhost")
+```
+
+### 3) Criar truststore com a CA do partner
+
+```bash
+TRUSTSTORE_PWD="$(awk -F= '/TRUSTSTORE_PASSWORD/{print $2}' .env)"
+keytool -importcert -noprompt \
+  -alias partner-ca \
+  -file .mtls/partner-ca.crt \
+  -keystore .mtls/truststore.p12 \
+  -storetype PKCS12 \
+  -storepass "$TRUSTSTORE_PWD"
+```
+
+### 4) Subir servidor fake exigindo certificado de cliente
+
+```bash
+openssl s_server -accept 9443 \
+  -cert .mtls/partner.crt -key .mtls/partner.key \
+  -Verify 1 -CAfile .mtls/client.crt -www
+```
+
+### 5) Rodar o app com smoke test mTLS
+
+```bash
+set -a; source .env; set +a
+java -jar target/mtls-0.0.1-SNAPSHOT.jar \
+  --server.port=0 \
+  --partner.mtls.enabled=true \
+  --partner.mtls.smoke.enabled=true \
+  --partner.mtls.smoke.url=https://localhost:9443/
+```
+
+Log esperado:
+
+- `Running mTLS smoke check against https://localhost:9443/`
+- `mTLS smoke check OK: status 200 OK`
+
+## K8s: armazenando certificados em Secret
+
+Quando roda no Kubernetes, os arquivos (`client.p12` e `truststore.p12`) devem ficar em **Secret**
+e ser montados no pod em `/etc/mtls`. As senhas entram via variaveis de ambiente.
+
+Arquivos base no repo:
+
+- `k8s/secret-mtls-files.yml` (client.p12 + truststore.p12 em base64)
+- `k8s/secret-mtls-passwords.yml` (CLIENT_KEYSTORE_PASSWORD + TRUSTSTORE_PASSWORD)
+- `k8s/deployment.yml` (monta `/etc/mtls` e injeta env vars)
+- `k8s/configmap.yml` (mantem `partner.mtls.enabled=true`)
+
+### 1) Gerar base64 dos arquivos
+
+```bash
+base64 -i client.p12 | tr -d '\n'
+base64 -i truststore.p12 | tr -d '\n'
+```
+
+Copie os outputs e cole em `k8s/secret-mtls-files.yml` nos campos `client.p12` e `truststore.p12`.
+
+### 2) Definir senhas no Secret de passwords
+
+Edite `k8s/secret-mtls-passwords.yml` e preencha:
+
+- `CLIENT_KEYSTORE_PASSWORD`
+- `TRUSTSTORE_PASSWORD`
+
+### 3) Aplicar no cluster
+
+```bash
+kubectl apply -f k8s/namespace.yml
+kubectl apply -f k8s/secret-mtls-files.yml
+kubectl apply -f k8s/secret-mtls-passwords.yml
+kubectl apply -f k8s/configmap.yml
+kubectl apply -f k8s/deployment.yml
+kubectl apply -f k8s/service.yml
+```
+
+### 4) Conferir se os arquivos foram montados
+
+```bash
+kubectl -n mtls-demo exec deploy/mtls-client -- ls -la /etc/mtls
+```
+
+### 5) Alternativa: gerar truststore no cluster (initContainer)
+
+Se quiser gerar o `truststore.p12` dentro do cluster a partir de uma CA em ConfigMap:
+
+- Veja `k8s/truststore-initcontainer.yml`
+- O initContainer escreve em `/etc/mtls-generated` e o pod usa esse arquivo
+
+Esse fluxo e util quando a CA muda com frequencia e voce nao quer rebuildar Secrets.
+
 ## Troubleshooting
 
 - `PKIX path building failed`: truststore não possui CA/chain correta.
