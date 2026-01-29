@@ -5,16 +5,19 @@ spring:
 partner:
   mtls:
     enabled: true
-    client-keystore-path: /etc/mtls/client.p12
+    client-keystore-path: ${CLIENT_KEYSTORE_PATH:/etc/mtls/client.p12}
     client-keystore-password: ${CLIENT_KEYSTORE_PASSWORD}
     client-keystore-type: PKCS12
     server-validation:
       mode: TRUSTSTORE
-      truststore-path: /etc/mtls/truststore.p12
+      truststore-path: ${TRUSTSTORE_PATH:/etc/mtls/truststore.p12}
       truststore-password: ${TRUSTSTORE_PASSWORD}
       truststore-type: PKCS12
       pinned-cert-sha256-hex: ${PARTNER_PIN_FINGERPRINT:}
       pinned-spki-sha256-base64: ${PARTNER_PIN_SPKI:}
+    smoke:
+      enabled: false
+      url: https://localhost:8443/
 
 logging:
   level:
